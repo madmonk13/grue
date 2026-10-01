@@ -10,6 +10,7 @@ A web-based Z-machine interpreter (the format Frotz plays) where you can
 - Mobile first: bottom-sheet menus, a compact compass, and the action panel folds away while you type
 - Autosaves after every move; reloading the page drops you straight back into the story you were reading
 - Named save slots via `save` / `restore`
+- An automatic map of the places you've visited, with tap-to-walk
 - No build step and no dependencies
 
 ## Running it
@@ -34,6 +35,7 @@ To use it on a phone, host the folder anywhere static (GitHub Pages, Netlify, et
 | **Here** | The object tree under the current room, filtered to things the game has actually *mentioned* since you arrived, so a closed mailbox doesn't reveal its leaflet |
 | **Carrying** | Children of the player object (found by the object that answers to "me") |
 | **Verbs** | The game's own dictionary, using its part-of-speech flags, alphabetized with an A–Z filter |
+| **Map** | Built from moves you actually make, so one-way passages and mazes are mapped as they behaved. Rooms are laid out by compass direction; unexplored exits (from the same exit data the compass uses) show as stubs. Moves with no direction (magic words, "climb tree") appear as dashed, labelled links. Tap a room to walk there by the shortest known route; the walk stops if a move goes somewhere unexpected. Saved with autosaves and save slots. |
 | **Words in the story** | Nouns the parser knows are underlined; tapping one adds it to the command you're building (turn this off in Reading settings) |
 
 Tap an object for an action sheet (Examine, Take, Open, Put in…). You can also build a
@@ -48,6 +50,8 @@ and tapped words are added to what you've typed.
 | --- | --- |
 | `js/zmachine.js` | Z-machine interpreter (v1–5, 7, 8; not v6 graphics) |
 | `js/choices.js` | Derives compass/objects/verbs from game memory |
+| `js/automap.js` | Records visited rooms and connections, lays them out, finds routes |
+| `js/mapview.js` | Draws the map as a pannable, zoomable SVG |
 | `js/app.js` | UI, library, saves, settings |
 | `js/storage.js` | IndexedDB (story files) and localStorage (settings, saves) |
 | `css/style.css` | Layout and themes |

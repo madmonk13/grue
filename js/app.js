@@ -95,6 +95,13 @@
     saveName: $('#save-name'),
     saveList: $('#save-list'),
     toast: $('#toast'),
+    mapDialog: $('#mapview'),
+    mapSvg: $('#map-svg'),
+    mapSub: $('#map-sub'),
+    mapCard: $('#map-card'),
+    mapCardName: $('#map-card-name'),
+    mapCardInfo: $('#map-card-info'),
+    mapWalk: $('#map-walk'),
   };
 
   const finePointer = window.matchMedia('(pointer: fine)').matches;
@@ -211,7 +218,7 @@
   /* Dialog plumbing                                                        */
   /* ====================================================================== */
 
-  for (const d of [el.sheet, el.settings, el.saves]) {
+  for (const d of [el.sheet, el.settings, el.saves, el.mapDialog]) {
     d.addEventListener('click', (e) => {
       if (e.target === d || e.target.closest('[data-close]')) d.close();
     });
@@ -402,7 +409,7 @@
 
   function showLibrary() {
     closeMenu();
-    for (const d of [el.sheet, el.saves]) if (d.open) d.close();
+    for (const d of [el.sheet, el.saves, el.mapDialog]) if (d.open) d.close();
     game = null;
     el.game.hidden = true;
     el.library.hidden = false;
@@ -469,6 +476,9 @@
       history: local.get('hist.' + vm.gameId, []),
       histPos: -1,
       anchor: null,
+      map: new AutoMap(),
+      mapLoc: 0,
+      pendingCmd: '',
     };
     stories.put(game.id, { bytes, title: meta.title, source: meta.source, addedAt: Date.now() });
     if (meta.libId) local.set('lib.' + meta.libId, game.id);
@@ -502,6 +512,8 @@
       game.scene = auto.scene || '';
       game.lastLoc = auto.lastLoc;
       game.choices.dark = !!auto.dark;
+      game.map = new AutoMap(auto.map);
+      game.mapLoc = game.map.current;
     } catch {
       local.remove('auto.' + game.id);
       vm.reset();
@@ -539,6 +551,8 @@
     game.scene = '';
     game.lastLoc = -1;
     game.choices.dark = false;
+    game.map = new AutoMap();
+    game.mapLoc = 0;
     el.transcript.replaceChildren();
     newTurn();
     vm.run();
@@ -670,6 +684,7 @@
     }
     game.lastLoc = loc;
     renderChoices(opts.resumed ? '' : game.turnText);
+    recordMap(loc, opts);
     game.turnText = '';
     scrollAfterTurn();
 
@@ -712,6 +727,7 @@
       html: html.length > 200000 ? html.slice(html.indexOf('<div class="turn">', html.length - 200000)) : html,
       scene: game.scene,
       lastLoc: game.lastLoc,
+      map: game.map.toJSON(),
       dark: game.choices.dark,
       meta: {
         title: meta.title,
@@ -737,6 +753,7 @@
     echo.dataset.echo = '1';
     game.turnEl.append(echo, '\n');
     game.anchor = echo;
+    game.pendingCmd = cmd;
     if (cmd && game.history[game.history.length - 1] !== cmd) {
       game.history.push(cmd);
       if (game.history.length > 100) game.history.shift();
@@ -1154,6 +1171,105 @@
   }
 
   /* ====================================================================== */
+  /* Map                                                                    */
+  /* ====================================================================== */
+
+  const mapView = new MapView(el.mapSvg, { onRoomTap: selectMapRoom });
+  let mapSelected = 0;
+
+  /** Note this turn's position on the map. */
+  function recordMap(loc, opts) {
+    const { choices, vm } = game;
+    const cmd = game.pendingCmd;
+    game.pendingCmd = '';
+    // In Inform games a dark room reports "Darkness" as the location; map the real room.
+    const room = choices.realRoom(loc);
+    if (!room) return;
+    const dark = game.scanned ? game.scanned.dark : false;
+    if (!opts.resumed) {
+      game.map.record(game.mapLoc, room, cmd, {
+        name: vm.objName(room) || game.statusName || '?',
+        dark,
+        darkName: 'Dark place',
+        died: /you have died|\*\*\*\*/i.test(game.turnText),
+      });
+      if (!dark) game.map.setExits(room, choices.exits(loc));
+    } else if (!game.map.rooms[room]) {
+      game.map.record(0, room, '', { name: vm.objName(room), dark });
+    }
+    game.mapLoc = room;
+    game.map.current = room;
+    if (el.mapDialog.open) renderMap();
+  }
+
+  function renderMap() {
+    const n = game.map.size;
+    el.mapSub.textContent = `${n} ${n === 1 ? 'place' : 'places'} explored · tap a room`;
+    mapView.render(game.map, mapSelected);
+  }
+
+  function openMap() {
+    mapSelected = 0;
+    el.mapCard.hidden = true;
+    openDialog(el.mapDialog);
+    requestAnimationFrame(() => {
+      renderMap();
+      mapView.center(game.map.rooms[game.map.current]);
+    });
+  }
+
+  function selectMapRoom(id) {
+    const map = game.map;
+    const room = map.rooms[id];
+    if (!room) return;
+    mapSelected = id;
+    renderMap();
+    el.mapCardName.textContent = room.name || 'Unknown';
+    el.mapWalk.hidden = true;
+    if (id === map.current) {
+      el.mapCardInfo.textContent = 'You are here';
+    } else {
+      const route = map.route(map.current, id);
+      if (route && route.length) {
+        el.mapCardInfo.textContent = `${route.length} ${route.length === 1 ? 'move' : 'moves'} away`;
+        el.mapWalk.hidden = false;
+        el.mapWalk.onclick = () => walkRoute(route);
+      } else {
+        el.mapCardInfo.textContent = 'No known route from here yet';
+      }
+    }
+    el.mapCard.hidden = false;
+  }
+
+  /** Walk a route one move at a time, stopping if anything goes differently. */
+  async function walkRoute(route) {
+    el.mapDialog.close();
+    const dirs = Object.fromEntries(game.choices.directions().map((d) => [d.id, d.cmd]));
+    for (const step of route) {
+      if (!game || !game.vm.waiting || game.vm.waiting.type !== 'line') return;
+      submit(dirs[step.dir]);
+      await new Promise((r) => setTimeout(r, 220));
+      if (!game) return;
+      if (game.mapLoc !== step.to) {
+        toast('Stopped: that move didn’t go where the map expected');
+        return;
+      }
+    }
+  }
+
+  $('#map-zoom-in').addEventListener('click', () => mapView.zoomBy(1.25));
+  $('#map-zoom-out').addEventListener('click', () => mapView.zoomBy(0.8));
+  $('#map-center').addEventListener('click', () => game && mapView.center(game.map.rooms[game.map.current]));
+  el.mapSvg.addEventListener('keydown', (e) => {
+    const room = e.target.closest && e.target.closest('[data-room]');
+    if (room && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      selectMapRoom(+room.dataset.room);
+    }
+  });
+  window.addEventListener('resize', () => el.mapDialog.open && mapView.applyView());
+
+  /* ====================================================================== */
   /* Save & restore                                                         */
   /* ====================================================================== */
 
@@ -1230,6 +1346,7 @@
       snap: ZMachine.serialize(game.vm.snapshot()),
       scene: game.scene,
       dark: game.choices.dark,
+      map: game.map.toJSON(),
     };
     const ok = local.set('saves.' + game.id, all);
     finishSaveDialog();
@@ -1245,6 +1362,11 @@
     game.vm.finishRestore(ZMachine.deserialize(slot.snap));
     game.scene = slot.scene || '';
     game.choices.dark = !!slot.dark;
+    if (slot.map) {
+      game.map = new AutoMap(slot.map);
+      game.mapLoc = game.map.current;
+    }
+    game.pendingCmd = '';
     toast(`Restored “${name}”`);
     afterRun({ keepScene: true });
   }
@@ -1299,6 +1421,10 @@
         closeMenu();
         openDialog(el.settings);
       } else if (action === 'library') goLibrary();
+      else if (action === 'map' && game) {
+        closeMenu();
+        openMap();
+      }
     }
     const cmdEl = e.target.closest('[data-cmd]');
     if (cmdEl && game) {

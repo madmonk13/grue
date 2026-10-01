@@ -394,6 +394,22 @@
       return (this.player = best);
     }
 
+    /**
+     * The room the player is really in. Usually `loc`, but Inform reports a
+     * stand-in "Darkness" location when the lights are out.
+     */
+    realRoom(loc) {
+      const vm = this.vm;
+      const player = this.player;
+      if (!player) return loc;
+      let top = 0;
+      for (let p = vm.objParent(player), i = 0; p && i < 10; p = vm.objParent(p), i++) {
+        if (p === loc) return loc;
+        top = p;
+      }
+      return top || loc;
+    }
+
     /** The words of an object's name that the parser actually understands. */
     phraseFor(o) {
       let name = this.vm.objName(o).toLowerCase();
